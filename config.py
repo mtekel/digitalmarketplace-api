@@ -27,8 +27,13 @@ class Config:
     DM_API_SUPPLIERS_PAGE_SIZE = 100
     SQLALCHEMY_COMMIT_ON_TEARDOWN = False
     SQLALCHEMY_RECORD_QUERIES = True
-    SQLALCHEMY_DATABASE_URI = 'postgresql://localhost/digitalmarketplace'
-
+    SQLALCHEMY_DATABASE_URI = 'postgresql://{}:{}@{}:{}/{}'.format(
+      os.environ.get('PG_USER'),
+      os.environ.get('PG_PASSWORD'),
+      os.environ.get('PG_HOST'),
+      os.environ.get('PG_PORT'),
+      os.environ.get('PG_DATABASE')
+    )
 
 class Test(Config):
     DM_SEARCH_API_AUTH_TOKEN = 'test'
