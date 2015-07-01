@@ -107,6 +107,7 @@ class ServiceUpdater(object):
         if 'lastCompleted' in service:
             service['createdAt'] = service['lastCompleted']
         service.pop('lastCompletedByEmail', None)
+        service.pop('updatedAt', None)
         service.pop('lastCompleted', None)
         service.pop('lastUpdated', None)
         service.pop('lastUpdatedByEmail', None)
