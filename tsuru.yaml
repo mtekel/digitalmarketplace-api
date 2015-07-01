@@ -1,6 +1,6 @@
-#hooks:
-#  build:
-#  - scripts/build.sh
+hooks:
+  build:
+  - scripts/build.sh
 healthcheck:
   path: /_status
   method: GET
