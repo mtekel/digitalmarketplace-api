@@ -1,0 +1,6 @@
+#libffi-dev
+#libssl-dev
+#nodejs-legacy
+#npm
+postgresql-server-dev-9.3
+git
