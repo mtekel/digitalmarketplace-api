@@ -1,0 +1,5 @@
+libffi-dev
+libssl-dev
+nodejs-legacy
+npm
+git
