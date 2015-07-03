@@ -13,6 +13,9 @@ tsuru app-run 'python scripts/import_suppliers_from_api.py --users=password123 h
 # Import services
 tsuru app-run 'python scripts/import_services_from_api.py http://127.0.0.1:8888 ourtoken https://preview-api.development.digitalmarketplace.service.gov.uk wXeLg9vQNRqdkb9kccHDzFRaNL'
 
+# Import data into search service
+tsuru app-run 'python scripts/index_services.py https://digitalmarketplace-search-api-ci.tsuru.paas.alphagov.co.uk oursearchtoken https://preview-api.development.digitalmarketplace.service.gov.uk wXeLg9vQNRqdkb9kccHDzFRaNL'
+
 # Add cname (this is because SSL certificate is only for *.tsuru.paas.alphagov.co.uk)
 # Add this to Route53 if you haven't done so already
 tsuru cname-add digitalmarketplace-api-ci.tsuru.paas.alphagov.co.uk
