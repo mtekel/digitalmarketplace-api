@@ -27,7 +27,7 @@ class Config:
     DM_API_SUPPLIERS_PAGE_SIZE = 100
     SQLALCHEMY_COMMIT_ON_TEARDOWN = False
     SQLALCHEMY_RECORD_QUERIES = True
-    SQLALCHEMY_DATABASE_URI = 'postgresql://{}:{}@{}:{}/{}'.format(
+    SQLALCHEMY_DATABASE_URI = 'postgresql://{}:{}@{}:{}/{}?client_encoding=utf8'.format(
       os.environ.get('PG_USER'),
       os.environ.get('PG_PASSWORD'),
       os.environ.get('PG_HOST'),
