@@ -12,7 +12,7 @@ from ...validation import is_valid_service_id_or_400
 from ...models import Service, DraftService, Supplier, AuditEvent, Framework
 from ...service_utils import validate_and_return_updater_request, \
     update_and_validate_service, index_service, validate_service, \
-    commit_and_archive_service
+    commit_and_archive_service, create_service_from_draft
 from ...draft_utils import validate_and_return_draft_request, \
     get_draft_validation_errors
 
@@ -72,18 +72,18 @@ def edit_draft_service(draft_id):
 
     updater_json = validate_and_return_updater_request()
     update_json = validate_and_return_draft_request()
-
+    page_questions = update_json.pop('page_questions', [])
     draft = DraftService.query.filter(
         DraftService.id == draft_id
     ).first_or_404()
 
-    errs = get_draft_validation_errors(update_json,
-                                       draft.data['lot'],
-                                       framework_id=draft.framework_id)
-    if errs:
-        return jsonify(errors=errs), 400
-
     draft.update_from_json(update_json)
+    errs = get_draft_validation_errors(draft.data,
+                                       draft.data['lot'],
+                                       framework_id=draft.framework_id,
+                                       required=page_questions)
+    if errs:
+        abort(400, errs)
 
     audit = AuditEvent(
         audit_type=AuditTypes.update_draft_service,
@@ -223,8 +223,7 @@ def publish_draft_service(draft_id):
             draft.data)
 
     else:
-        service_from_draft = Service.create_from_draft(draft, "enabled")
-        validate_service(service_from_draft)
+        service_from_draft = create_service_from_draft(draft, "enabled")
 
     commit_and_archive_service(service_from_draft, update_details,
                                AuditTypes.publish_draft_service,

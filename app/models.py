@@ -1,5 +1,7 @@
-import uuid
+import random
 from datetime import datetime
+
+from flask import current_app
 from flask_sqlalchemy import BaseQuery
 
 from sqlalchemy import asc
@@ -11,7 +13,7 @@ from sqlalchemy_utils import generic_relationship
 from dmutils.formats import DATETIME_FORMAT
 
 from . import db
-from .utils import link, url_for
+from .utils import link, url_for, strip_whitespace_from_data
 
 
 class Framework(db.Model):
@@ -233,8 +235,6 @@ class User(db.Model):
                          nullable=False)
     active = db.Column(db.Boolean, index=False, unique=False,
                        nullable=False)
-    locked = db.Column(db.Boolean, index=False, unique=False,
-                       nullable=False)
     created_at = db.Column(db.DateTime, index=False, unique=False,
                            nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, index=False, unique=False,
@@ -242,6 +242,8 @@ class User(db.Model):
                            onupdate=datetime.utcnow)
     password_changed_at = db.Column(db.DateTime, index=False, unique=False,
                                     nullable=False)
+    logged_in_at = db.Column(db.DateTime, nullable=True)
+    failed_login_count = db.Column(db.Integer, nullable=False, default=0)
     role = db.Column(db.String, index=False, unique=False, nullable=False)
 
     supplier_id = db.Column(db.BigInteger,
@@ -249,6 +251,17 @@ class User(db.Model):
                             index=True, unique=False, nullable=True)
 
     supplier = db.relationship(Supplier, lazy='joined', innerjoin=False)
+
+    @property
+    def locked(self):
+        login_attempt_limit = current_app.config['DM_FAILED_LOGIN_LIMIT']
+        return self.failed_login_count >= login_attempt_limit
+
+    @staticmethod
+    def get_by_email_address(email_address):
+        return User.query.filter(
+            User.email_address == email_address
+        ).first()
 
     def get_link(self):
         return url_for('.get_user_by_id', user_id=self.id)
@@ -264,7 +277,10 @@ class User(db.Model):
             'createdAt': self.created_at.strftime(DATETIME_FORMAT),
             'updatedAt': self.updated_at.strftime(DATETIME_FORMAT),
             'passwordChangedAt':
-                self.password_changed_at.strftime(DATETIME_FORMAT)
+                self.password_changed_at.strftime(DATETIME_FORMAT),
+            'loggedInAt': self.logged_in_at.strftime(DATETIME_FORMAT)
+                if self.logged_in_at else None,
+            'failedLoginCount': self.failed_login_count,
         }
 
         if self.role == 'supplier':
@@ -340,12 +356,9 @@ class ServiceTableMixin(object):
         data.pop('frameworkName', None)
         data.pop('status', None)
         data.pop('links', None)
-        for key, value in data.items():
-            if isinstance(value, list):
-                # Remove empty items from lists
-                data[key] = list(filter(None, value))
         current_data = dict(self.data.items())
         current_data.update(data)
+        current_data = strip_whitespace_from_data(current_data)
         self.data = current_data
 
         now = datetime.utcnow()
@@ -526,7 +539,4 @@ def filter_null_value_fields(obj):
 
 
 def generate_new_service_id():
-    # TODO: Decide what we want G7 service IDs to look like and implement
-    u = uuid.uuid4()
-    id = str(u.int)[-16:]
-    return id
+    return str(random.randint(7e15, 8e15-1))

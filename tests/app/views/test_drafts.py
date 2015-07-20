@@ -1,10 +1,13 @@
 from tests.app.helpers import BaseApplicationTest
 from datetime import datetime
 from flask import json
-from app.models import Supplier, ContactInformation, Service, Framework
+import mock
+from sqlalchemy.exc import IntegrityError
+from app.models import Supplier, ContactInformation, Service, Framework, \
+    DraftService
 from app import db
 
-from nose.tools import assert_equal, assert_in
+from nose.tools import assert_equal, assert_in, assert_raises
 
 
 class TestDraftServices(BaseApplicationTest):
@@ -337,8 +340,7 @@ class TestDraftServices(BaseApplicationTest):
             content_type='application/json')
         data2 = json.loads(res2.get_data())
         assert_equal(res2.status_code, 400)
-        assert_in("'Bad Type' is not one of", data2['errors']['serviceTypes'])
-        # 'Invalid value' is not one of
+        assert_in("'Bad Type' is not one of", data2['error']['serviceTypes'])
 
     def test_validation_errors_returned_for_invalid_update_of_copy(self):
         res = self.client.put(
@@ -359,8 +361,8 @@ class TestDraftServices(BaseApplicationTest):
             content_type='application/json')
         data = json.loads(res.get_data())
         assert_equal(res.status_code, 400)
-        assert_in("'badField' was unexpected", str(data['errors']['_form']))
-        assert_in("'chickens' is not one of", data['errors']['priceUnit'])
+        assert_in("'badField' was unexpected", str(data['error']['_form']))
+        assert_in("'chickens' is not one of", data['error']['priceUnit'])
 
     def test_should_create_draft_from_existing_service(self):
         res = self.client.put(
@@ -492,6 +494,41 @@ class TestDraftServices(BaseApplicationTest):
         data = json.loads(fetch.get_data())
         assert_equal(fetch.status_code, 200)
         assert_equal(data['services']['serviceName'], 'new service name')
+
+    def test_whitespace_is_stripped_when_updating_a_draft(self):
+        res = self.client.put(
+            '/draft-services/copy-from/{}'.format(self.service_id),
+            data=json.dumps(self.updater_json),
+            content_type='application/json')
+        draft_id = json.loads(res.get_data())['services']['id']
+        update = self.client.post(
+            '/draft-services/{}'.format(draft_id),
+            data=json.dumps({
+                'update_details': {
+                    'updated_by': 'joeblogs'},
+                'services': {
+                    'serviceName': '      a new  service name      ',
+                    'serviceFeatures': [
+                        "     Feature   1    ",
+                        "   ",
+                        "",
+                        "    second feature    "
+                    ],
+                }
+            }),
+            content_type='application/json')
+
+        data = json.loads(update.get_data())
+        assert_equal(update.status_code, 200)
+        assert_equal(data['services']['serviceName'], 'a new  service name')
+
+        fetch = self.client.get('/draft-services/{}'.format(draft_id))
+        data = json.loads(fetch.get_data())
+        assert_equal(fetch.status_code, 200)
+        assert_equal(data['services']['serviceName'], 'a new  service name')
+        assert_equal(len(data['services']['serviceFeatures']), 2)
+        assert_equal(data['services']['serviceFeatures'][0], 'Feature   1')
+        assert_equal(data['services']['serviceFeatures'][1], 'second feature')
 
     def test_should_edit_draft_with_audit_event(self):
         res = self.client.put(
@@ -694,3 +731,74 @@ class TestDraftServices(BaseApplicationTest):
         assert_equal(
             json.loads(archives.get_data())['services'][0]['serviceName'],
             'An example G-7 SCS Service')
+
+    def publish_new_draft_service(self):
+        res = self.client.post(
+            '/draft-services/g-cloud-7/create',
+            data=json.dumps(self.create_draft_json),
+            content_type='application/json')
+        draft_data = json.loads(res.get_data())
+        draft_id = draft_data['services']['id']
+        g7_complete = self.load_example_listing('G7-SCS')
+        g7_complete.pop('id')
+        draft_update_json = {'services': g7_complete,
+                             'update_details': {'updated_by': 'joeblogs'}}
+        res2 = self.client.post(
+            '/draft-services/{}'.format(draft_id),
+            data=json.dumps(draft_update_json),
+            content_type='application/json')
+        json.loads(res2.get_data())
+
+        return self.client.post(
+            '/draft-services/{}/publish'.format(draft_id),
+            data=json.dumps({
+                'update_details': {
+                    'updated_by': 'joeblogs',
+                }
+            }),
+            content_type='application/json')
+
+    @mock.patch('app.models.generate_new_service_id')
+    def test_service_id_collisions_should_be_handled(self,
+                                                     generate_new_service_id):
+        # Return the same ID a few times (cause collisions) and then return
+        # a different one.
+        generate_new_service_id.side_effect = [
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123458',
+        ]
+
+        res = self.publish_new_draft_service()
+        assert_equal(res.status_code, 200)
+        res = self.publish_new_draft_service()
+        assert_equal(res.status_code, 200)
+
+        with self.app.app_context():
+            # Count is 3 because we create on in the setup
+            assert_equal(Service.query.count(), 3)
+            assert_equal(DraftService.query.count(), 0)
+
+    @mock.patch('app.models.generate_new_service_id')
+    def test_draft_service_should_be_left_on_service_id_collision_failure(
+            self, generate_new_service_id):
+        generate_new_service_id.side_effect = [
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123457',
+            '1234567890123457',
+        ]
+
+        res = self.publish_new_draft_service()
+        assert_equal(res.status_code, 200)
+        with assert_raises(IntegrityError):
+            res = self.publish_new_draft_service()
+
+        with self.app.app_context():
+            db.session.rollback()
+            assert_equal(Service.query.count(), 2)
+            assert_equal(DraftService.query.count(), 1)

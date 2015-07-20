@@ -35,6 +35,9 @@ class Config:
       os.environ.get('PG_DATABASE')
     )
 
+    DM_FAILED_LOGIN_LIMIT = 5
+
+
 class Test(Config):
     DM_SEARCH_API_AUTH_TOKEN = 'test'
     DM_SEARCH_API_URL = 'http://localhost'

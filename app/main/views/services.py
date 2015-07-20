@@ -9,7 +9,7 @@ from ...models import ArchivedService, Service, Supplier, Framework
 from sqlalchemy import asc
 from ...validation import detect_framework_or_400, is_valid_service_id_or_400
 from ...utils import url_for, pagination_links, \
-    drop_foreign_fields, display_list
+    drop_foreign_fields, display_list, strip_whitespace_from_data
 
 from ...service_utils import (
     validate_and_return_service_request,
@@ -42,7 +42,7 @@ def list_services():
 
     supplier_id = request.args.get('supplier_id')
 
-    services = Service.query.framework_is_live().default_order()
+    services = Service.query.framework_is_live()
 
     if request.args.get('status'):
         services = services.has_statuses(*request.values.getlist('status'))
@@ -58,11 +58,13 @@ def list_services():
         if not supplier:
             abort(404, "supplier_id '%d' not found" % supplier_id)
 
-        items = services.filter(Service.supplier_id == supplier_id).all()
+        items = services.default_order().filter(Service.supplier_id == supplier_id).all()
         return jsonify(
             services=[service.serialize() for service in items],
             links=dict()
         )
+    else:
+        services = services.order_by(asc(Service.id))
 
     services = services.paginate(
         page=page,
@@ -164,7 +166,7 @@ def import_service(service_id):
         service_json,
         ['supplierName', 'links', 'frameworkName']
     )
-
+    service_data = strip_whitespace_from_data(service_data)
     framework = detect_framework_or_400(service_data)
     service_data = drop_foreign_fields(service_data, ['id'])
 

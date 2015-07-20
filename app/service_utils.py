@@ -6,7 +6,7 @@ from .utils import get_json_from_request, \
 from .validation import validate_updater_json_or_400, get_validation_errors
 from . import search_api_client, apiclient
 from . import db
-from .models import ArchivedService, AuditEvent, Framework
+from .models import ArchivedService, AuditEvent, Framework, Service
 
 
 def validate_and_return_updater_request():
@@ -104,11 +104,7 @@ def commit_and_archive_service(updated_service, update_details,
 def index_service(service):
     if service.framework.status == 'live' and service.status == 'published':
         try:
-            search_api_client.index(
-                service.service_id,
-                service.data,
-                service.supplier.name,
-                service.framework.name)
+            search_api_client.index(service.service_id, service.serialize())
         except apiclient.HTTPError as e:
             current_app.logger.warning(
                 'Failed to add {} to search index: {}'.format(
@@ -122,3 +118,22 @@ def delete_service_from_index(service):
         current_app.logger.warning(
             'Failed to remove {} to search index: {}'.format(
                 service.service_id, e.message))
+
+
+def create_service_from_draft(draft, status):
+    counter = 0
+    while True:
+        db.session.begin_nested()
+        service = Service.create_from_draft(draft, status)
+        try:
+            validate_service(service)
+            db.session.add(service)
+            db.session.commit()
+            return service
+        except IntegrityError:
+            current_app.logger.warning(
+                "Service ID collision on {}".format(service.service_id))
+            counter += 1
+            db.session.rollback()
+            if counter >= 5:
+                raise

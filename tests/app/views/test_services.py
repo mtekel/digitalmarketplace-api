@@ -15,7 +15,7 @@ from dmutils.formats import DATETIME_FORMAT
 
 
 class TestListServicesOrdering(BaseApplicationTest):
-    def test_should_order_services_by_framework_lot_name(self):
+    def test_should_order_supplier_services_by_framework_lot_name(self):
         with self.app.app_context():
             self.app.config['DM_API_SERVICES_PAGE_SIZE'] = 10
             now = datetime.utcnow()
@@ -58,7 +58,7 @@ class TestListServicesOrdering(BaseApplicationTest):
 
             db.session.commit()
 
-        response = self.client.get('/services')
+        response = self.client.get('/services?supplier_id=1')
         data = json.loads(response.get_data())
 
         assert_equal(response.status_code, 200)
@@ -70,7 +70,62 @@ class TestListServicesOrdering(BaseApplicationTest):
             'g6_saas',
             'g5_paas',
             'g5_saas',
-            ])
+        ])
+
+    def test_all_services_list_ordered_by_id(self):
+        with self.app.app_context():
+            self.app.config['DM_API_SERVICES_PAGE_SIZE'] = 10
+            now = datetime.utcnow()
+
+            g5_saas = self.load_example_listing("G5")
+            g5_paas = self.load_example_listing("G5")
+            g6_paas_2 = self.load_example_listing("G6-PaaS")
+            g6_iaas_1 = self.load_example_listing("G6-IaaS")
+            g6_paas_1 = self.load_example_listing("G6-PaaS")
+            g6_saas = self.load_example_listing("G6-SaaS")
+            g6_iaas_2 = self.load_example_listing("G6-IaaS")
+
+            db.session.add(Supplier(supplier_id=1, name=u"Supplier 1"))
+
+            def insert_service(listing, service_id, framework_id):
+                db.session.add(Service(service_id=service_id,
+                                       supplier_id=1,
+                                       updated_at=now,
+                                       status='published',
+                                       created_at=now,
+                                       framework_id=framework_id,
+                                       data=listing))
+
+            # override certain fields to create ordering difference
+            g6_iaas_1['serviceName'] = "b service name"
+            g6_iaas_2['serviceName'] = "a service name"
+            g6_paas_1['serviceName'] = "b service name"
+            g6_paas_2['serviceName'] = "a service name"
+            g5_paas['lot'] = "PaaS"
+
+            insert_service(g5_paas, "g5_paas", 3)
+            insert_service(g5_saas, "g5_saas", 3)
+            insert_service(g6_iaas_1, "g6_iaas_1", 1)
+            insert_service(g6_iaas_2, "g6_iaas_2", 1)
+            insert_service(g6_paas_1, "g6_paas_1", 1)
+            insert_service(g6_paas_2, "g6_paas_2", 1)
+            insert_service(g6_saas, "g6_saas", 1)
+
+            db.session.commit()
+
+        response = self.client.get('/services')
+        data = json.loads(response.get_data())
+
+        assert_equal(response.status_code, 200)
+        assert_equal([d['id'] for d in data['services']], [
+            'g5_paas',
+            'g5_saas',
+            'g6_iaas_1',
+            'g6_iaas_2',
+            'g6_paas_1',
+            'g6_paas_2',
+            'g6_saas',
+        ])
 
 
 class TestListServices(BaseApplicationTest):
@@ -927,7 +982,7 @@ class TestShouldCallSearchApiOnPutToCreateService(BaseApplicationTest):
 
             payload = self.load_example_listing("G6-IaaS")
             payload['id'] = "1234567890123456"
-            self.client.put(
+            response = self.client.put(
                 '/services/1234567890123456',
                 data=json.dumps(
                     {
@@ -937,13 +992,9 @@ class TestShouldCallSearchApiOnPutToCreateService(BaseApplicationTest):
                 ),
                 content_type='application/json')
 
-            service = Service.query.filter(Service.service_id ==
-                                           "1234567890123456").first()
             search_api_client.index.assert_called_with(
                 "1234567890123456",
-                service.data,
-                "Supplier 1",
-                "G-Cloud 6"
+                json.loads(response.get_data())['services']
             )
 
     def test_should_not_index_on_service_on_expired_frameworks(
@@ -1030,13 +1081,9 @@ class TestShouldCallSearchApiOnPost(BaseApplicationTest):
                 ),
                 content_type='application/json')
 
-            service = Service.query.filter(Service.service_id ==
-                                           "1234567890123456").first()
             search_api_client.index.assert_called_with(
                 "1234567890123456",
-                service.data,
-                "Supplier 1",
-                "G-Cloud 6"
+                mock.ANY
             )
 
     @mock.patch('app.service_utils.db.session.commit')
@@ -1181,9 +1228,7 @@ class TestShouldCallSearchApiOnPostStatusUpdate(BaseApplicationTest):
             if service_is_indexed:
                 search_api_client.index.assert_called_with(
                     service.service_id,
-                    service.data,
-                    service.supplier.name,
-                    service.framework.name
+                    json.loads(response.get_data())['services']
                 )
             else:
                 assert_false(search_api_client.index.called)
@@ -1359,6 +1404,47 @@ class TestPutService(BaseApplicationTest, JSONUpdateTestMixin):
                 self.string_to_time(service["updatedAt"], DATETIME_FORMAT),
                 now,
                 delta=timedelta(seconds=2))
+
+    @mock.patch('app.search_api_client')
+    def test_whitespace_is_stripped_on_import(self, search_api_client):
+        with self.app.app_context():
+            search_api_client.index.return_value = "bar"
+
+            payload = self.load_example_listing("G6-IaaS")
+            payload['id'] = "1234567890123456"
+            payload['serviceSummary'] = "    A new summary with   space    "
+            payload['serviceFeatures'] = ["    ",
+                                          "    A feature   with space    ",
+                                          "",
+                                          "    A second feature with space   "]
+            response = self.client.put(
+                '/services/1234567890123456',
+                data=json.dumps(
+                    {
+                        'update_details': {
+                            'updated_by': 'joeblogs'},
+                        'services': payload}
+                ),
+                content_type='application/json')
+
+            assert_equal(response.status_code, 201)
+
+            response = self.client.get("/services/1234567890123456")
+            service = json.loads(response.get_data())["services"]
+
+            assert_equal(
+                service["serviceSummary"],
+                "A new summary with   space"
+            )
+            assert_equal(len(service["serviceFeatures"]), 2)
+            assert_equal(
+                service["serviceFeatures"][0],
+                "A feature   with space"
+            )
+            assert_equal(
+                service["serviceFeatures"][1],
+                "A second feature with space"
+            )
 
     @mock.patch('app.search_api_client')
     def test_add_a_new_service_creates_audit_event(self, search_api_client):
